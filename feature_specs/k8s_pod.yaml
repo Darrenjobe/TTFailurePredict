@@ -1,0 +1,33 @@
+# Kubernetes pod features. See design doc §6.
+
+- name: cpu_utilization_pct
+  description: "Pod CPU as percentage of request"
+  entity_classes: [k8s.pod]
+  source: nr_metric
+  nrql: "SELECT average(cpuUsedCores) / average(cpuRequestedCores) * 100 FROM K8sPodSample WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900, 3600]
+  transformations: [level, trend_slope, volatility_stddev, changepoint_distance]
+
+- name: memory_utilization_pct
+  description: "Pod memory as percentage of request"
+  entity_classes: [k8s.pod]
+  source: nr_metric
+  nrql: "SELECT average(memoryWorkingSetBytes) / average(memoryRequestedBytes) * 100 FROM K8sPodSample WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900, 3600]
+  transformations: [level, trend_slope, volatility_stddev]
+
+- name: restart_count_rate
+  description: "Container restarts per 5 minutes"
+  entity_classes: [k8s.pod]
+  source: nr_metric
+  nrql: "SELECT max(restartCount) FROM K8sContainerSample WHERE entity.guid = ? TIMESERIES 5 minutes"
+  windows: [300, 900, 3600]
+  transformations: [level, trend_slope]
+
+- name: pod_ready_ratio
+  description: "1.0 if pod ready, else 0"
+  entity_classes: [k8s.pod]
+  source: nr_metric
+  nrql: "SELECT latest(isReady) FROM K8sPodSample WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300]
+  transformations: [level]

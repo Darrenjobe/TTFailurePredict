@@ -1,0 +1,42 @@
+# APM application features. See design doc §6.
+
+- name: error_rate
+  description: "Fraction of transactions with error=true"
+  entity_classes: [apm.application]
+  source: nr_metric
+  nrql: "SELECT percentage(count(*), WHERE error IS true) FROM Transaction WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900]
+  transformations: [level, trend_slope, volatility_stddev]
+
+- name: latency_p99
+  description: "99th percentile response time (ms)"
+  entity_classes: [apm.application]
+  source: nr_metric
+  nrql: "SELECT percentile(duration, 99) * 1000 FROM Transaction WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900]
+  transformations: [level, trend_slope, volatility_stddev, changepoint_distance]
+
+- name: throughput_rpm
+  description: "Requests per minute"
+  entity_classes: [apm.application]
+  source: nr_metric
+  nrql: "SELECT rate(count(*), 1 minute) FROM Transaction WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900]
+  transformations: [level, trend_slope, volatility_stddev]
+
+- name: apdex_score
+  description: "Apdex satisfaction score"
+  entity_classes: [apm.application]
+  source: nr_metric
+  nrql: "SELECT apdex(duration, t: 0.5) FROM Transaction WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [300, 900, 3600]
+  transformations: [level, trend_slope]
+
+- name: upstream_hazard_weighted
+  description: "Sum of upstream hazard * edge weight"
+  entity_classes: [apm.application]
+  source: derived
+  windows: [60]
+  transformations: [level]
+  computation: |
+    sum over upstream u of (edge_weight(u) * hazard_score(u))
