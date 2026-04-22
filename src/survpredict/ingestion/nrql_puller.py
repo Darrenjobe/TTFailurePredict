@@ -143,14 +143,20 @@ def run_pull(entity_classes: Iterable[str] | None = None) -> int:
 _TIMESERIES_RE = re.compile(r"TIMESERIES\s+\d+\s+\w+", re.IGNORECASE)
 
 
-def _render_nrql_backfill(template: str, guid: str, days: int, bucket_minutes: int) -> str:
+def _render_nrql_backfill(
+    template: str,
+    guid: str,
+    since: datetime,
+    until: datetime,
+    bucket_minutes: int,
+) -> str:
     q = template.replace("?", f"'{guid}'")
     q = _TIMESERIES_RE.sub(f"TIMESERIES {bucket_minutes} minutes", q)
     if "TIMESERIES" not in q.upper():
         q = f"{q} TIMESERIES {bucket_minutes} minutes"
-    # Strip any existing SINCE clause and append our own.
-    q = re.sub(r"SINCE\s+[^A-Z]*?(?=\s+(?:UNTIL|LIMIT|TIMESERIES|$))", "", q, flags=re.IGNORECASE)
-    return f"{q.strip()} SINCE {days} days ago"
+    since_str = since.strftime("%Y-%m-%d %H:%M:%S")
+    until_str = until.strftime("%Y-%m-%d %H:%M:%S")
+    return f"{q.strip()} SINCE '{since_str}' UNTIL '{until_str}'"
 
 
 def _bucket_ts(bucket: dict) -> datetime | None:
@@ -169,6 +175,9 @@ def _bucket_value(bucket: dict) -> float | None:
     return None
 
 
+_MAX_BUCKETS_PER_CALL = 360  # NerdGraph caps TIMESERIES at 366; leave margin
+
+
 def backfill_feature_for_entity(
     client: NewRelicClient,
     spec: FeatureSpec,
@@ -177,30 +186,53 @@ def backfill_feature_for_entity(
     days: int,
     bucket_minutes: int,
 ) -> list[FeatureRow]:
-    nrql = _render_nrql_backfill(spec.nrql or "", entity_guid, days, bucket_minutes)
-    try:
-        results = client.nrql(nrql)
-    except Exception as e:
-        log.warning("backfill_nrql_failed", feature=spec.name, guid=entity_guid, err=str(e))
-        return []
+    """Backfill a (entity, feature) across `days` of history.
+
+    Chunks the time window so each NRQL call stays under NerdGraph's 366-bucket
+    cap. Writes one features row per bucket per configured window_seconds.
+    """
+    now = datetime.now(timezone.utc)
+    total_start = now - timedelta(days=days)
+    chunk_span = timedelta(minutes=_MAX_BUCKETS_PER_CALL * bucket_minutes)
 
     rows: list[FeatureRow] = []
-    for bucket in results:
-        ts = _bucket_ts(bucket)
-        if ts is None:
-            continue
-        value = _bucket_value(bucket)
-        for window_seconds in spec.windows:
-            rows.append(
-                FeatureRow(
-                    entity_guid=entity_guid,
-                    entity_class=entity_class,
-                    feature_name=spec.name,
-                    window_seconds=window_seconds,
-                    value=value,
-                    computed_at=ts,
-                )
+    chunk_start = total_start
+    while chunk_start < now:
+        chunk_end = min(chunk_start + chunk_span, now)
+        nrql = _render_nrql_backfill(
+            spec.nrql or "", entity_guid, chunk_start, chunk_end, bucket_minutes
+        )
+        try:
+            results = client.nrql(nrql)
+        except Exception as e:
+            log.warning(
+                "backfill_nrql_failed",
+                feature=spec.name,
+                guid=entity_guid,
+                chunk_start=chunk_start.isoformat(),
+                chunk_end=chunk_end.isoformat(),
+                err=str(e),
             )
+            chunk_start = chunk_end
+            continue
+
+        for bucket in results:
+            ts = _bucket_ts(bucket)
+            if ts is None:
+                continue
+            value = _bucket_value(bucket)
+            for window_seconds in spec.windows:
+                rows.append(
+                    FeatureRow(
+                        entity_guid=entity_guid,
+                        entity_class=entity_class,
+                        feature_name=spec.name,
+                        window_seconds=window_seconds,
+                        value=value,
+                        computed_at=ts,
+                    )
+                )
+        chunk_start = chunk_end
     return rows
 
 
