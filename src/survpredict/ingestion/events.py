@@ -55,20 +55,24 @@ def pull_incidents(
     with NewRelicClient() as client:
         results = client.nrql(nrql)
 
+    if results:
+        log.debug("incidents_sample_row", keys=list(results[0].keys()))
+
+    # NrAiIncident yields one row per state transition (open/activated/close).
+    # Dedupe in memory on (entity_guid, openedAt) so one logical incident lands
+    # as a single events row regardless of which transitions NR returned.
+    seen: set[tuple[str, int]] = set()
     inserted = 0
     with pg_cursor() as cur:
         for r in results:
             guid = r.get("entity.guid")
             opened = r.get("openedAt")
-            closed = r.get("closedAt")
-            event_state = r.get("event")  # 'open' | 'close' | 'activated' ...
-            if not guid or not opened:
+            if not guid or opened is None:
                 continue
-            # One NrAiIncident record per state transition. Anchor our event
-            # on the incident *opening* only; skip close rows so we don't
-            # double-count.
-            if event_state and str(event_state).lower() in ("close", "closed"):
+            key = (guid, int(opened))
+            if key in seen:
                 continue
+            seen.add(key)
             occurred_at = datetime.fromtimestamp(opened / 1000, tz=timezone.utc)
             klass = normalize_entity_class(r.get("entity.type", "unknown"))
             cur.execute(
@@ -81,5 +85,10 @@ def pull_incidents(
                 (guid, klass, r.get("priority"), occurred_at),
             )
             inserted += cur.rowcount
-    log.info("incidents_pulled", returned=len(results), inserted=inserted)
+    log.info(
+        "incidents_pulled",
+        returned=len(results),
+        unique_incidents=len(seen),
+        inserted=inserted,
+    )
     return inserted
