@@ -1,8 +1,8 @@
-# survpredict — Survival Analysis for Predictive Observability
+# TTFailurePredict — Survival Analysis for Predictive Observability
 
 > Prototype v0.1. See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design doc.
 
-`survpredict` is a predictive-observability system that takes New Relic telemetry
+`TTFailurePredict` is a predictive-observability system that takes New Relic telemetry
 as input and produces per-entity **hazard scores** — the instantaneous
 probability that an entity (APM app, k8s pod, Lambda, host, …) is about to
 fail. Instead of waiting for a threshold to fire, the system forecasts
