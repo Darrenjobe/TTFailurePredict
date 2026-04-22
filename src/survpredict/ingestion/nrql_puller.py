@@ -100,17 +100,30 @@ def _extract_scalar(results: list[dict]) -> float | None:
 def run_pull(entity_classes: Iterable[str] | None = None) -> int:
     """Pull all configured features for the given entity classes. Returns row count."""
     specs = load_feature_specs()
+    nr_specs = [s for s in specs if s.source == "nr_metric"]
+    log.info(
+        "nrql_pull_start",
+        total_specs=len(specs),
+        nr_metric_specs=len(nr_specs),
+        filter_classes=list(entity_classes) if entity_classes else "all",
+    )
     now = utcnow()
     total = 0
     with NewRelicClient() as client:
-        for spec in specs:
-            if spec.source != "nr_metric":
-                continue
+        for spec in nr_specs:
             targets = spec.entity_classes
             if entity_classes is not None:
                 targets = [c for c in targets if c in entity_classes]
             for klass in targets:
-                for guid, _ in _entities_for_class(klass):
+                entities = _entities_for_class(klass)
+                log.info(
+                    "nrql_pull_spec",
+                    spec=spec.name,
+                    entity_class=klass,
+                    entity_count=len(entities),
+                    windows=spec.windows,
+                )
+                for guid, _ in entities:
                     rows = pull_feature_for_entity(client, spec, guid, klass, now)
                     write_feature_rows(rows)
                     total += len(rows)
