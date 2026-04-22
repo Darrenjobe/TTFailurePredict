@@ -13,7 +13,7 @@ Shows:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.express as px
@@ -38,7 +38,7 @@ with st.sidebar:
 
 @st.cache_data(ttl=15)
 def load_top(k: int, minutes: int) -> pd.DataFrame:
-    cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     with pg_cursor() as cur:
         cur.execute(
             """
@@ -63,7 +63,7 @@ def load_top(k: int, minutes: int) -> pd.DataFrame:
 
 @st.cache_data(ttl=15)
 def load_history(guid: str, minutes: int) -> pd.DataFrame:
-    cutoff = datetime.utcnow() - timedelta(minutes=minutes * 10)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes * 10)
     with pg_cursor() as cur:
         cur.execute(
             """

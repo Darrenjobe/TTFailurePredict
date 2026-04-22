@@ -11,7 +11,7 @@ Design doc §7.4:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -97,7 +97,7 @@ def lead_time_distribution(
     lead_minutes. Events where no prior prediction crossed the threshold get
     NaN lead_minutes (interpreted as a miss).
     """
-    since = datetime.utcnow() - timedelta(hours=lookback_hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     with pg_cursor() as cur:
         cur.execute(
             """
@@ -125,7 +125,7 @@ def lead_time_distribution(
 
 def precision_at_k(k: int = 10, horizon_minutes: int = 60) -> float:
     """Of the top-K highest-hazard entities, what fraction had an event within the horizon?"""
-    cutoff = datetime.utcnow() - timedelta(minutes=horizon_minutes)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=horizon_minutes)
     with pg_cursor() as cur:
         cur.execute(
             """

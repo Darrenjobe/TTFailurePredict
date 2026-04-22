@@ -10,7 +10,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -56,7 +56,7 @@ def _to_response(r: ScoreResult) -> ScoreResponse:
 
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
-    return {"status": "ok", "ts": datetime.utcnow().isoformat()}
+    return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/score/{entity_guid}", response_model=ScoreResponse)
@@ -95,7 +95,7 @@ def score_batch(req: BatchRequest) -> list[ScoreResponse]:
 @app.get("/top")
 def top(k: int = 25, window: int = 60) -> list[dict[str, Any]]:
     """Top-K currently riskiest entities within the last `window` minutes."""
-    cutoff = datetime.utcnow() - timedelta(minutes=window)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=window)
     with pg_cursor() as cur:
         cur.execute(
             """

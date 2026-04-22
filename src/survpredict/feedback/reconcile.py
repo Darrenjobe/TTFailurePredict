@@ -9,7 +9,7 @@ Joins structured postmortems against existing events/predictions to produce:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from survpredict.common.db import pg_cursor
@@ -21,7 +21,7 @@ log = get_logger(__name__)
 
 def reconcile(lookback_hours: int = 168, horizon_minutes: int = 60) -> dict[str, int]:
     s = settings()
-    since = datetime.utcnow() - timedelta(hours=lookback_hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     threshold = s.propagation_hazard_threshold
 
     tp = _mark_true_positives(since, threshold, horizon_minutes)
