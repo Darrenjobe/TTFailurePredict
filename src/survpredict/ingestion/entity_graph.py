@@ -16,6 +16,25 @@ from survpredict.ingestion.newrelic_client import NewRelicClient
 
 log = get_logger(__name__)
 
+# NerdGraph entity types -> our class-naming convention used in feature specs.
+# If you add a spec targeting a new class, add the corresponding NR type here.
+NR_TYPE_TO_CLASS = {
+    "APPLICATION": "apm.application",
+    "HOST": "infrastructure.host",
+    "AWSLAMBDAFUNCTION": "aws.lambda",
+    "KUBERNETESPOD": "k8s.pod",
+    "KUBERNETESCLUSTER": "k8s.cluster",
+    "BROWSERAPPLICATION": "browser.application",
+    "MOBILEAPPLICATION": "mobile.application",
+    "SYNTHMONITOR": "synthetic.monitor",
+    "WORKLOAD": "nr.workload",
+}
+
+
+def normalize_entity_class(nr_type: str) -> str:
+    """Map an NR entityType (uppercase, no dots) to our class name (dotted, lowercase)."""
+    return NR_TYPE_TO_CLASS.get(nr_type.upper(), nr_type.lower())
+
 RELATIONSHIPS_QUERY = """
 query($guids: [EntityGuid]!) {
   actor {
