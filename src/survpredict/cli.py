@@ -69,6 +69,19 @@ def ingest_entities(
     typer.echo(f"upserted {len(entities)} entities as class={klass}, {edges} edges")
 
 
+@ingest_app.command("backfill")
+def ingest_backfill(
+    days: int = typer.Option(7, help="How many days of history to backfill"),
+    bucket_minutes: int = typer.Option(5, help="TIMESERIES bucket size in minutes"),
+    entity_class: list[str] = typer.Option(None, "--entity-class", "-c"),
+):
+    """Pull historical NRQL TIMESERIES and materialize the features table."""
+    from survpredict.ingestion.nrql_puller import run_backfill
+
+    total = run_backfill(days=days, bucket_minutes=bucket_minutes, entity_classes=entity_class)
+    typer.echo(f"backfilled {total} feature rows")
+
+
 @ingest_app.command("postmortems")
 def ingest_postmortems(directory: Path = typer.Argument(...)):
     from survpredict.ingestion.postmortem import ingest_markdown_dir

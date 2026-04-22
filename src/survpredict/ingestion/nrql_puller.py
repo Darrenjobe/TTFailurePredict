@@ -13,8 +13,9 @@ for prototype-grade freshness (1 minute) and trivially reproducible.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from survpredict.common.db import pg_cursor
@@ -128,6 +129,117 @@ def run_pull(entity_classes: Iterable[str] | None = None) -> int:
                     write_feature_rows(rows)
                     total += len(rows)
     log.info("nrql_pull_complete", rows_written=total)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Historical backfill
+# ---------------------------------------------------------------------------
+# One NRQL call per (entity, feature) with TIMESERIES <bucket> SINCE N DAYS
+# AGO. Every returned bucket becomes one feature row (per configured window).
+# Makes a real training set possible without waiting for the puller to tick.
+
+
+_TIMESERIES_RE = re.compile(r"TIMESERIES\s+\d+\s+\w+", re.IGNORECASE)
+
+
+def _render_nrql_backfill(template: str, guid: str, days: int, bucket_minutes: int) -> str:
+    q = template.replace("?", f"'{guid}'")
+    q = _TIMESERIES_RE.sub(f"TIMESERIES {bucket_minutes} minutes", q)
+    if "TIMESERIES" not in q.upper():
+        q = f"{q} TIMESERIES {bucket_minutes} minutes"
+    # Strip any existing SINCE clause and append our own.
+    q = re.sub(r"SINCE\s+[^A-Z]*?(?=\s+(?:UNTIL|LIMIT|TIMESERIES|$))", "", q, flags=re.IGNORECASE)
+    return f"{q.strip()} SINCE {days} days ago"
+
+
+def _bucket_ts(bucket: dict) -> datetime | None:
+    ts = bucket.get("beginTimeSeconds") or bucket.get("endTimeSeconds")
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+
+
+def _bucket_value(bucket: dict) -> float | None:
+    for k, v in bucket.items():
+        if k in ("beginTimeSeconds", "endTimeSeconds", "inspectedCount"):
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return None
+
+
+def backfill_feature_for_entity(
+    client: NewRelicClient,
+    spec: FeatureSpec,
+    entity_guid: str,
+    entity_class: str,
+    days: int,
+    bucket_minutes: int,
+) -> list[FeatureRow]:
+    nrql = _render_nrql_backfill(spec.nrql or "", entity_guid, days, bucket_minutes)
+    try:
+        results = client.nrql(nrql)
+    except Exception as e:
+        log.warning("backfill_nrql_failed", feature=spec.name, guid=entity_guid, err=str(e))
+        return []
+
+    rows: list[FeatureRow] = []
+    for bucket in results:
+        ts = _bucket_ts(bucket)
+        if ts is None:
+            continue
+        value = _bucket_value(bucket)
+        for window_seconds in spec.windows:
+            rows.append(
+                FeatureRow(
+                    entity_guid=entity_guid,
+                    entity_class=entity_class,
+                    feature_name=spec.name,
+                    window_seconds=window_seconds,
+                    value=value,
+                    computed_at=ts,
+                )
+            )
+    return rows
+
+
+def run_backfill(
+    days: int = 7,
+    bucket_minutes: int = 5,
+    entity_classes: Iterable[str] | None = None,
+) -> int:
+    """Backfill historical feature values using NRQL TIMESERIES. Returns row count."""
+    specs = load_feature_specs()
+    nr_specs = [s for s in specs if s.source == "nr_metric"]
+    log.info(
+        "backfill_start",
+        days=days,
+        bucket_minutes=bucket_minutes,
+        nr_metric_specs=len(nr_specs),
+        filter_classes=list(entity_classes) if entity_classes else "all",
+    )
+    total = 0
+    with NewRelicClient() as client:
+        for spec in nr_specs:
+            targets = spec.entity_classes
+            if entity_classes is not None:
+                targets = [c for c in targets if c in entity_classes]
+            for klass in targets:
+                entities = _entities_for_class(klass)
+                log.info(
+                    "backfill_spec",
+                    spec=spec.name,
+                    entity_class=klass,
+                    entity_count=len(entities),
+                )
+                for guid, _ in entities:
+                    rows = backfill_feature_for_entity(
+                        client, spec, guid, klass, days, bucket_minutes
+                    )
+                    write_feature_rows(rows)
+                    total += len(rows)
+    log.info("backfill_complete", rows_written=total)
     return total
 
 
