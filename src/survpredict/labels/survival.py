@@ -112,13 +112,21 @@ def build_dataset(
 
 
 def _load_events(entity_class: str, since: datetime, until: datetime) -> dict[str, list[datetime]]:
+    """Return events for the class, using the entities table as the source of truth.
+
+    Joining through entities avoids depending on events.entity_class, which may
+    be stale (ingested before the normalize_entity_class mapping existed) or
+    inconsistent with how features are partitioned.
+    """
     with pg_cursor() as cur:
         cur.execute(
             """
-            SELECT entity_guid, occurred_at
-            FROM events
-            WHERE entity_class = %s AND occurred_at BETWEEN %s AND %s
-              AND (label_status IS NULL OR label_status != 'false_positive')
+            SELECT e.entity_guid, e.occurred_at
+            FROM events e
+            JOIN entities ent ON ent.entity_guid = e.entity_guid
+            WHERE ent.entity_class = %s
+              AND e.occurred_at BETWEEN %s AND %s
+              AND (e.label_status IS NULL OR e.label_status != 'false_positive')
             """,
             (entity_class, since, until),
         )
@@ -126,6 +134,12 @@ def _load_events(entity_class: str, since: datetime, until: datetime) -> dict[st
     out: dict[str, list[datetime]] = {}
     for r in rows:
         out.setdefault(r["entity_guid"], []).append(r["occurred_at"])
+    log.info(
+        "labels_events_loaded",
+        entity_class=entity_class,
+        events=sum(len(v) for v in out.values()),
+        distinct_entities=len(out),
+    )
     return out
 
 

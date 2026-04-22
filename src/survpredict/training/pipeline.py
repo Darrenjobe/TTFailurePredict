@@ -40,6 +40,28 @@ def run_training(
     if len(dataset) == 0:
         return {"status": "empty_dataset"}
 
+    n_events = int(dataset.events.sum())
+    log.info(
+        "dataset_built",
+        entity_class=entity_class,
+        n=len(dataset),
+        n_events=n_events,
+        event_rate=float(dataset.events.mean()),
+    )
+    if n_events == 0:
+        return {
+            "status": "all_censored",
+            "entity_class": entity_class,
+            "n": len(dataset),
+            "hint": (
+                "Features landed but no event hit a sampling grid point within "
+                "max_duration_minutes. Check: (a) events table has rows for the "
+                "same GUIDs as features; (b) event timestamps fall inside the "
+                "backfill window; (c) events.entity_class or entities.entity_class "
+                "matches the class being trained."
+            ),
+        }
+
     trained_rsf = train_rsf(dataset)
     report = evaluate_rsf(trained_rsf, dataset)
     rsf_version = log_model(trained_rsf, report, algorithm="rsf")
