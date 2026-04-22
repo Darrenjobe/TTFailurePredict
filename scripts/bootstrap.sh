@@ -40,19 +40,44 @@ done
 
 echo "-- schema already applied via /docker-entrypoint-initdb.d"
 
-echo "-- installing python package"
-pip install -e .
+# --- python venv -------------------------------------------------------------
+# Homebrew pythons don't ship an unversioned `pip`, and recent releases mark
+# the base env as externally-managed, so we always work inside .venv.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 not found. brew install python@3.12 (or 3.11) and retry." >&2
+  exit 1
+fi
+
+if [[ ! -d .venv ]]; then
+  echo "-- creating .venv ($(python3 --version))"
+  python3 -m venv .venv
+fi
+
+VENV_PY=".venv/bin/python"
+VENV_PIP=".venv/bin/pip"
+
+echo "-- upgrading pip in .venv"
+"$VENV_PY" -m pip install --upgrade pip >/dev/null
+
+echo "-- installing survpredict into .venv (editable)"
+"$VENV_PIP" install -e .
+
+SURVPREDICT=".venv/bin/survpredict"
 
 echo "-- syncing one entity class from NR (APPLICATION)"
-survpredict ingest entities APPLICATION
+"$SURVPREDICT" ingest entities APPLICATION
 
 echo "-- pulling an initial batch of NRQL features"
-survpredict ingest nrql
+"$SURVPREDICT" ingest nrql
 
 echo "-- pulling recent incidents as event labels"
-survpredict ingest incidents
+"$SURVPREDICT" ingest incidents
 
-echo "done. Next:"
+echo
+echo "done. To use the CLI in this shell:"
+echo "  source .venv/bin/activate"
+echo
+echo "Next:"
 echo "  survpredict train run apm.application"
 echo "  survpredict train promote <returned_version>"
 echo "  ${COMPOSE[*]} up -d inference warm-sweeper dashboard"

@@ -98,13 +98,18 @@ and an ingest license key.
 ```bash
 git clone <repo> && cd TTFailurePredict
 cp .env.example .env                 # fill in NR + Anthropic keys
-./scripts/bootstrap.sh               # brings up infra, pulls initial data
+./scripts/bootstrap.sh               # brings up infra, creates .venv, pulls initial data
+source .venv/bin/activate            # activate the venv bootstrap created
 survpredict train run apm.application
 survpredict train promote <version_printed_above>
 docker compose up -d inference warm-sweeper dashboard
 open http://localhost:8501           # risk dashboard
 open http://localhost:8080/docs      # inference API
 ```
+
+> The project is installed into `.venv/` rather than the system Python, since
+> modern Homebrew Python is marked externally-managed. Re-activate the venv
+> in any new shell (`source .venv/bin/activate`) to get the `survpredict` CLI.
 
 Milestone 1–3 from the design doc are covered by the above. Milestones 4–5
 (graph propagation, feedback loop) require additional entity classes and a
