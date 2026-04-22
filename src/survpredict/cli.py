@@ -43,23 +43,30 @@ def ingest_nrql(entity_class: list[str] = typer.Option(default=None)):
 @ingest_app.command("entities")
 def ingest_entities(
     entity_type: str = typer.Argument(..., help="NR entityType, e.g. APPLICATION"),
+    entity_class: str = typer.Option(
+        None,
+        "--entity-class",
+        help="Override our class name (default: normalized from entity_type, e.g. APPLICATION -> apm.application)",
+    ),
     skip_relationships: bool = typer.Option(False, help="Skip entity relationship snapshot"),
 ):
     from survpredict.ingestion.entity_graph import (
+        normalize_entity_class,
         search_entities,
         snapshot_relationships,
         upsert_entities,
     )
 
+    klass = entity_class or normalize_entity_class(entity_type)
     entities = search_entities(entity_type)
-    upsert_entities(entities, entity_class=entity_type.lower())
+    upsert_entities(entities, entity_class=klass)
     edges = 0
     if not skip_relationships:
         try:
             edges = snapshot_relationships([e["guid"] for e in entities])
         except Exception as e:
             typer.echo(f"warning: relationship snapshot failed: {e}", err=True)
-    typer.echo(f"upserted {len(entities)} entities, {edges} edges")
+    typer.echo(f"upserted {len(entities)} entities as class={klass}, {edges} edges")
 
 
 @ingest_app.command("postmortems")
