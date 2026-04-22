@@ -18,6 +18,24 @@ from survpredict.ingestion.newrelic_client import NewRelicClient
 log = get_logger(__name__)
 
 
+def _get_path(row: dict, path: str):
+    """Fetch a dotted NRQL attribute whether NR returned it flat or nested.
+
+    NerdGraph sometimes emits ``{"entity.guid": "..."}`` and sometimes
+    ``{"entity": {"guid": "..."}}``. Try flat first, then walk the path.
+    """
+    if path in row:
+        return row[path]
+    cur = row
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+        if cur is None:
+            return None
+    return cur
+
+
 def _build_nrql(
     since_minutes: int,
     entity_type: str | None,
@@ -56,25 +74,31 @@ def pull_incidents(
         results = client.nrql(nrql)
 
     if results:
-        log.debug("incidents_sample_row", keys=list(results[0].keys()))
+        log.info("incidents_sample_row", keys=list(results[0].keys()), sample=results[0])
 
     # NrAiIncident yields one row per state transition (open/activated/close).
     # Dedupe in memory on (entity_guid, openedAt) so one logical incident lands
     # as a single events row regardless of which transitions NR returned.
     seen: set[tuple[str, int]] = set()
     inserted = 0
+    skipped_no_guid = 0
+    skipped_no_opened = 0
     with pg_cursor() as cur:
         for r in results:
-            guid = r.get("entity.guid")
-            opened = r.get("openedAt")
-            if not guid or opened is None:
+            guid = _get_path(r, "entity.guid")
+            opened = _get_path(r, "openedAt") or _get_path(r, "timestamp")
+            if not guid:
+                skipped_no_guid += 1
+                continue
+            if opened is None:
+                skipped_no_opened += 1
                 continue
             key = (guid, int(opened))
             if key in seen:
                 continue
             seen.add(key)
             occurred_at = datetime.fromtimestamp(opened / 1000, tz=timezone.utc)
-            klass = normalize_entity_class(r.get("entity.type", "unknown"))
+            klass = normalize_entity_class(_get_path(r, "entity.type") or "unknown")
             cur.execute(
                 """
                 INSERT INTO events (entity_guid, entity_class, event_type, severity,
@@ -90,5 +114,7 @@ def pull_incidents(
         returned=len(results),
         unique_incidents=len(seen),
         inserted=inserted,
+        skipped_no_guid=skipped_no_guid,
+        skipped_no_opened=skipped_no_opened,
     )
     return inserted
