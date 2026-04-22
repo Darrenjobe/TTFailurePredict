@@ -96,7 +96,8 @@ def upsert_entities(entities: list[dict[str, Any]], entity_class: str) -> int:
                 INSERT INTO entities (entity_guid, entity_class, name, tags, last_seen_at)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (entity_guid) DO UPDATE
-                SET name = EXCLUDED.name,
+                SET entity_class = EXCLUDED.entity_class,
+                    name = EXCLUDED.name,
                     tags = EXCLUDED.tags,
                     last_seen_at = EXCLUDED.last_seen_at
                 """,
