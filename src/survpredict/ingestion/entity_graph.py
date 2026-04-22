@@ -17,16 +17,18 @@ from survpredict.ingestion.newrelic_client import NewRelicClient
 log = get_logger(__name__)
 
 RELATIONSHIPS_QUERY = """
-query($cursor: String, $guids: [EntityGuid!]) {
+query($guids: [EntityGuid]!) {
   actor {
     entities(guids: $guids) {
       guid
       name
       entityType
-      relationships {
-        target { entity { guid name entityType } }
-        source { entity { guid name entityType } }
-        type
+      relatedEntities {
+        results {
+          type
+          source { entity { guid name entityType } }
+          target { entity { guid name entityType } }
+        }
       }
     }
   }
@@ -94,16 +96,23 @@ def snapshot_relationships(guids: list[str]) -> int:
     """Pull relationships for a batch of entity guids and upsert the adjacency list."""
     now = utcnow()
     edges_written = 0
+    if not guids:
+        return 0
     with NewRelicClient() as client:
         for batch in _chunks(guids, 25):  # NerdGraph caps at 25 per call
-            data = client.graphql(RELATIONSHIPS_QUERY, {"guids": batch})
+            try:
+                data = client.graphql(RELATIONSHIPS_QUERY, {"guids": batch})
+            except Exception as e:
+                log.warning("relationships_batch_failed", err=str(e), size=len(batch))
+                continue
             for entity in data["actor"]["entities"] or []:
-                for rel in entity.get("relationships") or []:
+                related = (entity.get("relatedEntities") or {}).get("results") or []
+                for rel in related:
                     src = (rel.get("source") or {}).get("entity") or {}
                     dst = (rel.get("target") or {}).get("entity") or {}
                     if not src.get("guid") or not dst.get("guid"):
                         continue
-                    _upsert_edge(src["guid"], dst["guid"], rel.get("type", "related"), now)
+                    _upsert_edge(src["guid"], dst["guid"], rel.get("type") or "related", now)
                     edges_written += 1
     log.info("edges_snapshot_complete", edges=edges_written)
     return edges_written
