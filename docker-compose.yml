@@ -45,6 +45,11 @@ services:
     build: .
     command: uvicorn survpredict.inference.service:app --host 0.0.0.0 --port 8080
     env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     ports:
       - "8080:8080"
     depends_on:
@@ -57,6 +62,11 @@ services:
     build: .
     command: python -m survpredict.inference.warm_sweep
     env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,6 +77,10 @@ services:
     build: .
     command: streamlit run src/survpredict/ui/dashboard.py --server.port 8501 --server.address 0.0.0.0
     env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8501:8501"
     depends_on:
