@@ -17,25 +17,57 @@ from survpredict.ingestion.newrelic_client import NewRelicClient
 
 log = get_logger(__name__)
 
-INCIDENTS_NRQL = (
-    "SELECT incidentId, entity.guid, entity.type, priority, openedAt, closedAt "
-    "FROM NrAiIncident WHERE entity.guid IS NOT NULL SINCE {since_minutes} MINUTES AGO"
-)
+
+def _build_nrql(
+    since_minutes: int,
+    entity_type: str | None,
+    limit: int,
+) -> str:
+    type_clause = f" AND entity.type = '{entity_type}'" if entity_type else ""
+    return (
+        "SELECT incidentId, entity.guid, entity.type, priority, "
+        "openedAt, closedAt, event "
+        f"FROM NrAiIncident WHERE entity.guid IS NOT NULL{type_clause} "
+        f"SINCE {max(since_minutes, 1)} MINUTES AGO "
+        f"LIMIT {limit}"
+    )
 
 
-def pull_incidents(since: datetime | None = None) -> int:
+def pull_incidents(
+    since: datetime | None = None,
+    entity_type: str | None = "APPLICATION",
+    limit: int = 5000,
+) -> int:
+    """Pull NR alert incidents into the events table.
+
+    Args:
+      since: datetime lower bound (default: 24h ago).
+      entity_type: NR entityType filter. Defaults to APPLICATION (APM apps).
+        Pass None to pull incidents for any entity type.
+      limit: NRQL LIMIT. NR caps at 5000 per query; increase lookback or
+        run multiple times if you're brushing that ceiling.
+    """
     since = since or (utcnow() - timedelta(hours=24))
     minutes = int((utcnow() - since).total_seconds() // 60)
-    nrql = INCIDENTS_NRQL.format(since_minutes=max(minutes, 1))
+    nrql = _build_nrql(minutes, entity_type, limit)
+    log.info("incidents_pull_start", lookback_minutes=minutes, entity_type=entity_type, limit=limit)
 
     with NewRelicClient() as client:
         results = client.nrql(nrql)
 
+    inserted = 0
     with pg_cursor() as cur:
         for r in results:
             guid = r.get("entity.guid")
             opened = r.get("openedAt")
+            closed = r.get("closedAt")
+            event_state = r.get("event")  # 'open' | 'close' | 'activated' ...
             if not guid or not opened:
+                continue
+            # One NrAiIncident record per state transition. Anchor our event
+            # on the incident *opening* only; skip close rows so we don't
+            # double-count.
+            if event_state and str(event_state).lower() in ("close", "closed"):
                 continue
             occurred_at = datetime.fromtimestamp(opened / 1000, tz=timezone.utc)
             klass = normalize_entity_class(r.get("entity.type", "unknown"))
@@ -48,5 +80,6 @@ def pull_incidents(since: datetime | None = None) -> int:
                 """,
                 (guid, klass, r.get("priority"), occurred_at),
             )
-    log.info("incidents_pulled", count=len(results))
-    return len(results)
+            inserted += cur.rowcount
+    log.info("incidents_pulled", returned=len(results), inserted=inserted)
+    return inserted
