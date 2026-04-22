@@ -1,0 +1,172 @@
+"""Build (duration, event_indicator, covariates) tuples for survival models.
+
+For each (entity, time-window), emit a training sample:
+  - duration  -- minutes until next qualifying event, or censor time
+  - event     -- 1 if an event occurred within the horizon, else 0
+  - X         -- feature vector at the window's end timestamp
+
+Right-censoring is handled naturally: entities whose observation window ends
+before any event contribute as censored observations.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+
+from survpredict.common.db import pg_cursor
+from survpredict.common.logging import get_logger
+from survpredict.features.spec import FeatureSpec, load_feature_specs
+
+log = get_logger(__name__)
+
+
+@dataclass
+class SurvivalDataset:
+    X: pd.DataFrame
+    durations: np.ndarray
+    events: np.ndarray
+    feature_columns: list[str]
+    entity_class: str
+    created_at: datetime
+
+    def __len__(self) -> int:
+        return len(self.X)
+
+
+def build_dataset(
+    entity_class: str,
+    since: datetime,
+    until: datetime,
+    max_duration_minutes: int = 60,
+    sample_every_minutes: int = 5,
+    specs: list[FeatureSpec] | None = None,
+) -> SurvivalDataset:
+    """Assemble a survival training set for one entity class.
+
+    For each entity in the class, emit one sample every `sample_every_minutes`
+    across [since, until]. The event horizon is `max_duration_minutes`; if no
+    event occurs within it, the sample is censored at that cap.
+    """
+    specs = specs if specs is not None else load_feature_specs()
+    feature_names = [s.name for s in specs if entity_class in s.entity_classes]
+
+    entity_events = _load_events(entity_class, since - timedelta(minutes=max_duration_minutes), until)
+    pivot = _load_feature_pivot(entity_class, feature_names, since, until)
+
+    if pivot.empty:
+        log.warning("empty_feature_pivot", entity_class=entity_class)
+        return SurvivalDataset(
+            X=pivot,
+            durations=np.array([]),
+            events=np.array([]),
+            feature_columns=[],
+            entity_class=entity_class,
+            created_at=datetime.utcnow(),
+        )
+
+    samples: list[dict] = []
+    durations: list[float] = []
+    events: list[int] = []
+    step = timedelta(minutes=sample_every_minutes)
+
+    for guid, df in pivot.groupby("entity_guid"):
+        df = df.sort_values("computed_at").set_index("computed_at")
+        ev_times = sorted(entity_events.get(guid, []))
+        t = since
+        while t <= until:
+            row = _snapshot_at(df, t)
+            if row is None:
+                t += step
+                continue
+            next_event = _next_event_after(ev_times, t)
+            if next_event is None:
+                dur = max_duration_minutes
+                ev = 0
+            else:
+                delta_min = (next_event - t).total_seconds() / 60.0
+                if delta_min <= max_duration_minutes:
+                    dur = max(0.0, delta_min)
+                    ev = 1
+                else:
+                    dur = max_duration_minutes
+                    ev = 0
+            samples.append({"entity_guid": guid, **row})
+            durations.append(dur)
+            events.append(ev)
+            t += step
+
+    X = pd.DataFrame(samples)
+    fc = [c for c in X.columns if c != "entity_guid"]
+    return SurvivalDataset(
+        X=X[fc].astype("float64").fillna(0.0),
+        durations=np.asarray(durations, dtype="float64"),
+        events=np.asarray(events, dtype="int32"),
+        feature_columns=fc,
+        entity_class=entity_class,
+        created_at=datetime.utcnow(),
+    )
+
+
+def _load_events(entity_class: str, since: datetime, until: datetime) -> dict[str, list[datetime]]:
+    with pg_cursor() as cur:
+        cur.execute(
+            """
+            SELECT entity_guid, occurred_at
+            FROM events
+            WHERE entity_class = %s AND occurred_at BETWEEN %s AND %s
+              AND (label_status IS NULL OR label_status != 'false_positive')
+            """,
+            (entity_class, since, until),
+        )
+        rows = cur.fetchall()
+    out: dict[str, list[datetime]] = {}
+    for r in rows:
+        out.setdefault(r["entity_guid"], []).append(r["occurred_at"])
+    return out
+
+
+def _load_feature_pivot(
+    entity_class: str, feature_names: list[str], since: datetime, until: datetime
+) -> pd.DataFrame:
+    """Load features and pivot to one row per (entity, timestamp)."""
+    with pg_cursor() as cur:
+        cur.execute(
+            """
+            SELECT entity_guid, computed_at, feature_name, window_seconds, value
+            FROM features
+            WHERE entity_class = %s
+              AND feature_name = ANY(%s)
+              AND computed_at BETWEEN %s AND %s
+            """,
+            (entity_class, feature_names, since, until),
+        )
+        long_df = pd.DataFrame(cur.fetchall())
+    if long_df.empty:
+        return long_df
+    long_df["col"] = long_df["feature_name"] + "__w" + long_df["window_seconds"].astype(str)
+    wide = long_df.pivot_table(
+        index=["entity_guid", "computed_at"], columns="col", values="value", aggfunc="last"
+    ).reset_index()
+    wide.columns.name = None
+    return wide
+
+
+def _snapshot_at(df: pd.DataFrame, t: datetime) -> dict | None:
+    try:
+        idx = df.index.searchsorted(t, side="right") - 1
+        if idx < 0:
+            return None
+        return df.iloc[idx].to_dict()
+    except Exception:
+        return None
+
+
+def _next_event_after(event_times: list[datetime], t: datetime) -> datetime | None:
+    for et in event_times:
+        if et > t:
+            return et
+    return None

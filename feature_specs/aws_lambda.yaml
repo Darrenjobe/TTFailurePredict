@@ -1,0 +1,29 @@
+# AWS Lambda features. See design doc §6.
+
+- name: invocation_error_rate
+  entity_classes: [aws.lambda]
+  source: nr_metric
+  nrql: "SELECT percentage(count(*), WHERE aws.lambda.error IS true) FROM AwsLambdaInvocation WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900]
+  transformations: [level, trend_slope, volatility_stddev]
+
+- name: throttle_rate
+  entity_classes: [aws.lambda]
+  source: nr_metric
+  nrql: "SELECT rate(sum(aws.lambda.throttles), 1 minute) FROM Metric WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900]
+  transformations: [level, trend_slope]
+
+- name: cold_start_rate
+  entity_classes: [aws.lambda]
+  source: nr_metric
+  nrql: "SELECT percentage(count(*), WHERE aws.lambda.coldStart IS true) FROM AwsLambdaInvocation WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [300, 900]
+  transformations: [level, trend_slope]
+
+- name: duration_p99_ms
+  entity_classes: [aws.lambda]
+  source: nr_metric
+  nrql: "SELECT percentile(duration, 99) FROM AwsLambdaInvocation WHERE entity.guid = ? TIMESERIES 1 minute"
+  windows: [60, 300, 900]
+  transformations: [level, trend_slope, changepoint_distance]
