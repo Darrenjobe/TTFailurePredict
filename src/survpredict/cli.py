@@ -91,11 +91,28 @@ def ingest_postmortems(directory: Path = typer.Argument(...)):
 
 
 @ingest_app.command("incidents")
-def ingest_incidents():
+def ingest_incidents(
+    days: int = typer.Option(30, "--days", "-d", help="Lookback window in days"),
+    entity_type: str = typer.Option(
+        "APPLICATION",
+        "--entity-type",
+        "-t",
+        help="NR entityType filter. Pass '' to pull incidents for any entity type.",
+    ),
+    limit: int = typer.Option(5000, "--limit", help="NRQL LIMIT (NR max is 5000)"),
+):
+    """Pull NR alert incidents into the events table.
+
+    Defaults to the last 30 days, APM applications only, LIMIT 5000.
+    """
+    from datetime import datetime, timedelta, timezone
+
     from survpredict.ingestion.events import pull_incidents
 
-    n = pull_incidents()
-    typer.echo(f"pulled {n} incidents")
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    et = entity_type or None
+    n = pull_incidents(since=since, entity_type=et, limit=limit)
+    typer.echo(f"inserted {n} incidents (filter: days={days}, entity_type={et or 'any'}, limit={limit})")
 
 
 # ---- features ------------------------------------------------------------
