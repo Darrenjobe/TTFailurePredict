@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import pickle
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import mlflow
@@ -35,7 +35,7 @@ def log_model(
 ) -> str:
     """Log artifact to MLflow and mirror metadata to Postgres. Returns model_version."""
     _configure_mlflow()
-    model_version = f"{trained.entity_class}:{algorithm}:{int(datetime.utcnow().timestamp())}"
+    model_version = f"{trained.entity_class}:{algorithm}:{int(datetime.now(timezone.utc).timestamp())}"
 
     with tempfile.TemporaryDirectory() as tmp:
         artifact_path = Path(tmp) / "model.pkl"

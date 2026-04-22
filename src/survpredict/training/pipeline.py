@@ -7,7 +7,7 @@ class; intended to be scheduled weekly with a daily incremental warm-start
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from survpredict.common.logging import get_logger
 from survpredict.labels.survival import build_dataset
@@ -26,7 +26,7 @@ def run_training(
     sample_every_minutes: int = 5,
     train_cox_model: bool = True,
 ) -> dict:
-    until = datetime.utcnow()
+    until = datetime.now(timezone.utc)
     since = until - timedelta(days=lookback_days)
     log.info("training_start", entity_class=entity_class, since=since.isoformat())
 

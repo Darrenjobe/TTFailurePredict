@@ -12,7 +12,7 @@ before any event contribute as censored observations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -65,7 +65,7 @@ def build_dataset(
             events=np.array([]),
             feature_columns=[],
             entity_class=entity_class,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
 
     samples: list[dict] = []
@@ -107,7 +107,7 @@ def build_dataset(
         events=np.asarray(events, dtype="int32"),
         feature_columns=fc,
         entity_class=entity_class,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
 
 
@@ -156,13 +156,17 @@ def _load_feature_pivot(
 
 
 def _snapshot_at(df: pd.DataFrame, t: datetime) -> dict | None:
+    """Return the most recent row at or before `t`, or None if none exists."""
     try:
         idx = df.index.searchsorted(t, side="right") - 1
-        if idx < 0:
-            return None
-        return df.iloc[idx].to_dict()
-    except Exception:
+    except TypeError as e:
+        # Almost certainly a tz-awareness mismatch; loud so it doesn't silently
+        # produce empty datasets the way it did in the first cut.
+        log.warning("snapshot_at_tz_error", err=str(e), t=str(t), index_tz=str(getattr(df.index, "tz", None)))
         return None
+    if idx < 0:
+        return None
+    return df.iloc[idx].to_dict()
 
 
 def _next_event_after(event_times: list[datetime], t: datetime) -> datetime | None:

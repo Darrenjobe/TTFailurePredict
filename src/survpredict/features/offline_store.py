@@ -6,7 +6,7 @@ inference reads from the Redis online store.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, Sequence
 
 import pandas as pd
@@ -72,7 +72,7 @@ def recent_values(
     entity_guid: str, feature_name: str, window_seconds: int, lookback_seconds: int
 ) -> pd.DataFrame:
     """Latest raw samples for a (guid, feature, window) over the last `lookback_seconds`."""
-    since = datetime.utcnow() - timedelta(seconds=lookback_seconds)
+    since = datetime.now(timezone.utc) - timedelta(seconds=lookback_seconds)
     with pg_cursor() as cur:
         cur.execute(
             """

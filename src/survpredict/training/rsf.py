@@ -7,7 +7,7 @@ interactions, works with mixed feature types out of the box.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -66,7 +66,7 @@ def train_rsf(
         model=model,
         feature_columns=list(dataset.X.columns),
         entity_class=dataset.entity_class,
-        trained_at=datetime.utcnow(),
+        trained_at=datetime.now(timezone.utc),
         training_size=len(dataset),
         event_rate=float(dataset.events.mean()),
         params=params,

@@ -9,7 +9,7 @@ interpretation weakens.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 from lifelines import CoxPHFitter
@@ -55,7 +55,7 @@ def train_cox(
         model=fitter,
         feature_columns=keep,
         entity_class=dataset.entity_class,
-        trained_at=datetime.utcnow(),
+        trained_at=datetime.now(timezone.utc),
         training_size=len(dataset),
     )
 

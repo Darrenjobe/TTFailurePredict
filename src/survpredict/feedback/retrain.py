@@ -7,7 +7,7 @@ the model has an explicit signal to correct on.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -24,7 +24,7 @@ log = get_logger(__name__)
 
 def _hard_cases(entity_class: str, days: int = 14) -> list[str]:
     """Return entity_guids with a recent false_negative or repeat false_positive."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     with pg_cursor() as cur:
         cur.execute(
             """
@@ -42,7 +42,7 @@ def _hard_cases(entity_class: str, days: int = 14) -> list[str]:
 
 
 def full_retrain(entity_class: str, lookback_days: int = 90) -> dict:
-    until = datetime.utcnow()
+    until = datetime.now(timezone.utc)
     since = until - timedelta(days=lookback_days)
     ds = build_dataset(entity_class, since, until)
     if len(ds) == 0:
@@ -68,7 +68,7 @@ def full_retrain(entity_class: str, lookback_days: int = 90) -> dict:
 
 def incremental_retrain(entity_class: str, lookback_days: int = 7) -> dict:
     """Warm-start style: retrain on recent data only. Promoted only after canary."""
-    until = datetime.utcnow()
+    until = datetime.now(timezone.utc)
     since = until - timedelta(days=lookback_days)
     ds = build_dataset(entity_class, since, until)
     if len(ds) == 0:
