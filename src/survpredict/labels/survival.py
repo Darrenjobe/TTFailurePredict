@@ -53,9 +53,23 @@ def build_dataset(
     """
     specs = specs if specs is not None else load_feature_specs()
     feature_names = [s.name for s in specs if entity_class in s.entity_classes]
+    log.info(
+        "build_dataset_start",
+        entity_class=entity_class,
+        feature_names=feature_names,
+        since=since.isoformat(),
+        until=until.isoformat(),
+    )
 
     entity_events = _load_events(entity_class, since - timedelta(minutes=max_duration_minutes), until)
+    log.info("loading_feature_pivot")
     pivot = _load_feature_pivot(entity_class, feature_names, since, until)
+    log.info(
+        "feature_pivot_loaded",
+        rows=len(pivot),
+        entities=int(pivot["entity_guid"].nunique()) if not pivot.empty else 0,
+        cols=int(pivot.shape[1]) if not pivot.empty else 0,
+    )
 
     if pivot.empty:
         log.warning("empty_feature_pivot", entity_class=entity_class)
@@ -73,11 +87,22 @@ def build_dataset(
     events: list[int] = []
     step = timedelta(minutes=sample_every_minutes)
 
-    for guid, df in pivot.groupby("entity_guid"):
+    n_entities = pivot["entity_guid"].nunique()
+    log.info(
+        "sampling_grid_start",
+        entity_class=entity_class,
+        entities=n_entities,
+        step_minutes=sample_every_minutes,
+        horizon_minutes=max_duration_minutes,
+    )
+
+    for i, (guid, df) in enumerate(pivot.groupby("entity_guid"), start=1):
         df = df.sort_values("computed_at").set_index("computed_at")
         ev_times = sorted(entity_events.get(guid, []))
-        t = since
-        while t <= until:
+        first = df.index.min()
+        last = df.index.max()
+        t = max(since, first)  # don't walk before any data exists for this entity
+        while t <= until and t <= last + timedelta(minutes=max_duration_minutes):
             row = _snapshot_at(df, t)
             if row is None:
                 t += step
@@ -98,6 +123,15 @@ def build_dataset(
             durations.append(dur)
             events.append(ev)
             t += step
+
+        if i % 10 == 0 or i == n_entities:
+            log.info(
+                "sampling_progress",
+                done=i,
+                of=n_entities,
+                samples=len(samples),
+                events_so_far=int(sum(events)),
+            )
 
     X = pd.DataFrame(samples)
     fc = [c for c in X.columns if c != "entity_guid"]
