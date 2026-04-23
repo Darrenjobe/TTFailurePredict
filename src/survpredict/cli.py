@@ -138,12 +138,34 @@ def feature_list():
 @train_app.command("run")
 def train_run(
     entity_class: str = typer.Argument(...),
-    lookback_days: int = typer.Option(90),
-    horizon_min: int = typer.Option(60),
+    lookback_days: int = typer.Option(30, help="Days of history to assemble training data from"),
+    horizon_min: int = typer.Option(60, help="Survival horizon (minutes)"),
+    sample_every_minutes: int = typer.Option(
+        15,
+        "--sample-every-minutes",
+        help="Sampling grid step. Larger = fewer rows = less memory.",
+    ),
+    max_samples: int = typer.Option(
+        50_000,
+        "--max-samples",
+        help="Cap dataset size (stratified subsample preserving event=1 rows). 0 disables.",
+    ),
+    n_estimators: int = typer.Option(
+        200, "--n-estimators", help="RSF tree count. 500 is the design-doc target; 200 is plenty for v1."
+    ),
+    cox: bool = typer.Option(False, "--cox/--no-cox", help="Also fit Cox PH (slow, optional)"),
 ):
     from survpredict.training.pipeline import run_training
 
-    result = run_training(entity_class, lookback_days=lookback_days, max_duration_minutes=horizon_min)
+    result = run_training(
+        entity_class,
+        lookback_days=lookback_days,
+        max_duration_minutes=horizon_min,
+        sample_every_minutes=sample_every_minutes,
+        max_samples=max_samples or None,
+        n_estimators=n_estimators,
+        train_cox_model=cox,
+    )
     typer.echo(result)
 
 

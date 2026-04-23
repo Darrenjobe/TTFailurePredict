@@ -34,15 +34,30 @@ class TrainedRSF:
 
 def train_rsf(
     dataset: SurvivalDataset,
-    n_estimators: int = 500,
+    n_estimators: int = 200,
     min_samples_leaf: int = 15,
     max_features: str | float | None = "sqrt",
     max_depth: int | None = None,
     n_jobs: int = -1,
     random_state: int = 42,
+    verbose: int = 1,
+    use_float32: bool = True,
 ) -> TrainedRSF:
     if len(dataset) == 0:
         raise ValueError("empty training dataset")
+
+    log.info(
+        "rsf_fit_start",
+        entity_class=dataset.entity_class,
+        n=len(dataset),
+        n_features=dataset.X.shape[1],
+        n_estimators=n_estimators,
+        n_jobs=n_jobs,
+        dtype="float32" if use_float32 else "float64",
+    )
+
+    dtype = np.float32 if use_float32 else np.float64
+    X = dataset.X.values.astype(dtype, copy=False)
     y = Surv.from_arrays(event=dataset.events.astype(bool), time=dataset.durations)
     params = dict(
         n_estimators=n_estimators,
@@ -51,9 +66,10 @@ def train_rsf(
         max_depth=max_depth,
         n_jobs=n_jobs,
         random_state=random_state,
+        verbose=verbose,
     )
     model = RandomSurvivalForest(**params)
-    model.fit(dataset.X.values, y)
+    model.fit(X, y)
 
     log.info(
         "rsf_trained",
